@@ -1,2 +1,2 @@
 # superboogav2_db_persistance
-This is patched version of chromadb.py which manages chromadb database. This modification saves the database on disk.
+This is patched version of chromadb.py which manages chromadb. This modification saves the database on disk. In folder: "extensions\superboogav2\chromadb_persistant" or "extensions/superboogav2/chromadb_persistant". Additional parameters needed for db are saved in "extensions\superboogav2\chroma_data.json" or "extensions/superboogav2/chroma_data.json". If clear function fails delete the file and folder and new database will be created. 
