@@ -1,4 +1,4 @@
-#superboogav2_db_persistence
+superboogav2_db_persistence
 
 superboogav2_db_persistence is a patched version of chromadb.py designed to manage chromadb. This modified version introduces disk persistence for the database. The database files are stored in either of the following directories:
 
