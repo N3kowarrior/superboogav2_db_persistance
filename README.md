@@ -13,4 +13,5 @@ Additional parameters required for the database operation are saved in chroma_da
 Notes:
 
     If the clear function fails, deleting both the file and the folder will initiate the creation of a new database.
+↓This ↓
 ![obrazek](https://github.com/N3kowarriorCZenchilada/superboogav2_db_persistance/assets/118403968/ec0c5a73-2e72-4d6b-bd6b-70c1fc6a2da8)
