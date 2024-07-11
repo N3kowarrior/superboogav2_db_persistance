@@ -25,8 +25,8 @@ def save_chroma_data(ids, id_to_info, embeddings_cache, file_path="extensions/su
     chroma_data = {
         "ids": ids,
         "id_to_info": id_to_info,
-        "embeddings_cache": embeddings_cache,
     }
+    print(embeddings_cache)
     with open(file_path, 'w') as file:
         json.dump(chroma_data, file, indent=4)
     logger.info('Data successfully saved to JSON file.')
@@ -106,7 +106,7 @@ class ChromaCollector():
             chroma_data = load_chroma_data()
             self.ids = chroma_data["ids"]
             self.id_to_info = chroma_data["id_to_info"]
-            self.embeddings_cache = chroma_data["embeddings_cache"]
+            self.embeddings_cache = {}
         else:
             self.ids = []
             self.id_to_info = {}
