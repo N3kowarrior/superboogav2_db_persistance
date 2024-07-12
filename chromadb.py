@@ -4,14 +4,17 @@ import threading
 import os
 import json
 import chromadb
+import sqlite3
 import numpy as np
 import posthog
 import shutil
 import stat
+import server
 from chromadb.config import Settings
 from chromadb.utils import embedding_functions
-
 import extensions.superboogav2.parameters as parameters
+import modules.shared
+import modules.ui_chat
 from modules.logging_colors import logger
 from modules.text_generation import decode, encode
 
@@ -20,18 +23,33 @@ posthog.capture = lambda *args, **kwargs: None
 
 
 embedder = embedding_functions.SentenceTransformerEmbeddingFunction("sentence-transformers/all-mpnet-base-v2")
+characterName = ''
+chromaData_path = ""
+#Custom code begins here!
+#Gets name
+def get_character_name():
+    #try:
+        #character_menu, name1, name2 = event_data
+        #print(modules.shared.input_elements)
+        #name2 = None
+        #print (f"Extracted name from gradio: {name2}")
+        #if name2 is not None:
+            #return name2
+    #except  Exception as e:
+        #print(f"Failed to retrieve name from gradio: {str(e)}, due to gradio not being loaded. Ignore this message if loading extension")
+    return modules.shared.settings.get('character')
 
-def save_chroma_data(ids, id_to_info, embeddings_cache, file_path="extensions/superboogav2/chroma_data.json"):
+#Saves data needed to correctly work with db and print what was embeddded
+def save_chroma_data(ids, id_to_info, embeddings_cache, file_path):
     chroma_data = {
         "ids": ids,
         "id_to_info": id_to_info,
     }
-    print(embeddings_cache)
     with open(file_path, 'w') as file:
         json.dump(chroma_data, file, indent=4)
     logger.info('Data successfully saved to JSON file.')
-
-def load_chroma_data(file_path="extensions/superboogav2/chroma_data.json"):
+#Loads data neeeded to correctly work with db
+def load_chroma_data(file_path):
     if os.path.exists(file_path):
         with open(file_path, 'r') as file:
             content = file.read().strip()
@@ -96,14 +114,28 @@ class Info:
 
 class ChromaCollector():
     def __init__(self):
-        global embedder
-        os.makedirs("extensions/superboogav2/chromadb_persistant", exist_ok=True) #creates folder for db
-        name = 'ChromaCollector'
+        global embedder, characterName, chromaData_path, db_path, collector
+        characterName = get_character_name()
+        print(f'Character: {characterName} is detected')
+        db_path = "extensions/superboogav2/chromadb_persistant"
+        os.makedirs(db_path, exist_ok=True)
+        if characterName is not None:
+            name = 'ChromaCollector_' + characterName
+        else:
+            name = 'ChromaCollector'
         self.name = name
-        self.chroma_client = chromadb.PersistentClient("extensions/superboogav2/chromadb_persistant", Settings(anonymized_telemetry=False, allow_reset=True))
-        self.collection = self.chroma_client.get_or_create_collection(name=name, embedding_function=embedder) #creates or loads collection
-        if os.path.exists("extensions/superboogav2/chroma_data.json"):
-            chroma_data = load_chroma_data()
+        self.chroma_client = chromadb.PersistentClient(db_path, Settings(anonymized_telemetry=False, allow_reset=True))
+        try:
+            self.collection = self.chroma_client.get_or_create_collection(name=name, embedding_function=embedder) #creates or loads collection
+            print(f"Collection '{name}' created or loaded successfully.")
+        except Exception as e:
+            print(f"Failed to get or create collection '{name}': {str(e)}")
+        if characterName is not None:
+            chromaData_path = "extensions/superboogav2/chroma_data_" + f"{characterName}.json"
+        else:
+            chromaData_path = "extensions/superboogav2/chroma_data.json"
+        if os.path.exists(chromaData_path):
+            chroma_data = load_chroma_data(chromaData_path)
             self.ids = chroma_data["ids"]
             self.id_to_info = chroma_data["id_to_info"]
             self.embeddings_cache = {}
@@ -111,10 +143,29 @@ class ChromaCollector():
             self.ids = []
             self.id_to_info = {}
             self.embeddings_cache = {}
-            save_chroma_data(self.ids, self.id_to_info, self.embeddings_cache)
+            save_chroma_data(self.ids, self.id_to_info, self.embeddings_cache, chromaData_path)
         self.lock = threading.Lock()  # Locking so the server doesn't break.
 
     def add(self, texts: list[str], texts_with_context: list[str], starting_indices: list[int], metadatas: list[dict] = None):
+        global characterName, chromaData_path
+        print(f'Character: {characterName} is detected')
+        named = get_character_name()
+        print(named)
+        if characterName != get_character_name():
+            print(f"New character detected: {characterName}")
+            characterName = get_character_name()
+            if characterName is not None:
+                name = 'ChromaCollector_' + characterName
+                chromaData_path = "extensions/superboogav2/chroma_data_" + f"{characterName}.json"
+            else:
+                name = 'ChromaCollector'
+                chromaData_path = "extensions/superboogav2/chroma_data.json"
+            try:
+                self.collection = self.chroma_client.get_or_create_collection(name=name, embedding_function=embedder) #creates or loads collection
+                print(f"Collection '{name}' created or loaded successfully.")
+            except Exception as e:
+                print(f"Failed to get or create collection '{name}': {str(e)}")
+
         with self.lock:
             assert metadatas is None or len(metadatas) == len(texts), "metadatas must be None or have the same length as texts"
 
@@ -154,7 +205,7 @@ class ChromaCollector():
 
             self.id_to_info.update(new_info)
             self.ids.extend(new_ids)
-            save_chroma_data(self.ids, self.id_to_info, self.embeddings_cache, file_path="extensions/superboogav2/chroma_data.json")
+            save_chroma_data(self.ids, self.id_to_info, self.embeddings_cache, chromaData_path)
 
     def _split_texts_by_cache_hit(self, texts: list[str], new_ids: list[str], metadatas: list[dict]):
         existing_texts, non_existing_texts = [], []
@@ -184,8 +235,7 @@ class ChromaCollector():
             max_existing_id = max(int(id_) for id_ in self.ids)
         else:
             max_existing_id = -1
-        print("Max existing id:")
-        print(max_existing_id)
+        print(f"Max existing id:{max_existing_id}")
         return [str(i + max_existing_id + 1) for i in range(num_new_ids)]
 
     def _find_min_max_start_index(self):
@@ -258,11 +308,9 @@ class ChromaCollector():
     # Main function for retrieving chunks by distance. It performs merging, time weighing, and mean filtering.
     #This is the issue probably
     def _get_documents_ids_distances(self, search_strings: list[str], n_results: int):
-        print("N (Number?) results:")
-        print(n_results)
+        print(f"N results:{n_results}")
         n_results = min(len(self.ids), n_results)
         if n_results == 0:
-            print("got under n_results")
             return [], [], []
 
         if isinstance(search_strings, str):
@@ -288,8 +336,6 @@ class ChromaCollector():
 
         infos.sort(key=lambda x: x.start_index)
         infos = self._merge_infos(infos)
-        print("Infos:")
-        print(infos)
         texts_with_context = [inf.text_with_context for inf in infos]
         ids = [inf.id for inf in infos]
         distances = [inf.distance for inf in infos]
@@ -308,8 +354,6 @@ class ChromaCollector():
     def get_ids(self, search_strings: list[str], n_results: int) -> list[str]:
         with self.lock:
             _, ids, _ = self._get_documents_ids_distances(search_strings, n_results)
-            print("ids:")
-            print(ids)
             return ids
 
     # Cutoff token count
@@ -372,67 +416,31 @@ class ChromaCollector():
             logger.info(f'Successfully deleted {len(ids_to_delete)} records from chromaDB.')
 
     def clear(self):
-        if os.name == 'nt':
-            with self.lock:
-                self.chroma_client.reset()
+        global chromaData_path, characterName
+        chroma_data_path = chromaData_path
+        with self.lock:
+            if characterName is not None:
+                print("1")
+                name = 'ChromaCollector_' + characterName
+                self.name = name
+            else:
                 name = 'ChromaCollector'
                 self.name = name
-                chroma_db_path = "extensions/superboogav2/chromadb_persistant"
-                chroma_data_path = "extensions/superboogav2/chroma_data.json"
-
-                # Change permissions to ensure the files can be deleted
-                def change_permissions(path):
-                    if os.path.exists(path):
-                        if os.path.isdir(path):
-                            for root, dirs, files in os.walk(path):
-                                for dir in dirs:
-                                    os.chmod(os.path.join(root, dir), stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
-                                for file in files:
-                                    os.chmod(os.path.join(root, file), stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
-                        else:
-                            os.chmod(path, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
-
-                change_permissions(chroma_db_path)
-                if os.path.exists(chroma_db_path):
-                    shutil.rmtree(chroma_db_path)
-
-                change_permissions(chroma_data_path)
-                if os.path.exists(chroma_data_path):
-                    os.remove(chroma_data_path)
-
-                logger.info('Successfully cleared all records and reset chromaDB.Please restart text Generation Webui.(Turn completely off then on)')
-
-                self.ids = []
-                self.id_to_info = {}
-                self.embeddings_cache = {}
-
-        else:
-            with self.lock:
-                    self.chroma_client.reset()
-                    name = 'ChromaCollector'
-                    self.name = name
-                    chroma_db_path = "extensions/superboogav2/chromadb_persistant"
-                    chroma_data_path = "extensions/superboogav2/chroma_data.json"
-
-                    # Change permissions to ensure the files can be deleted
-                    if os.path.exists(chroma_db_path):
-                        for root, dirs, files in os.walk(chroma_db_path):
-                            for dir in dirs:
-                                os.chmod(os.path.join(root, dir), stat.S_IRWXU)
-                            for file in files:
-                                os.chmod(os.path.join(root, file), stat.S_IRWXU)
-                        shutil.rmtree(chroma_db_path)
-
-                    if os.path.exists(chroma_data_path):
-                        os.chmod(chroma_data_path, stat.S_IRWXU)
-                        os.remove(chroma_data_path)
-
-                    logger.info('Successfully cleared all records and reset chromaDB.Please restart text Generation Webui.(Turn completely off then on)')
-
-                    self.ids = []
-                    self.id_to_info = {}
-                    self.embeddings_cache = {}
-
-
+            print("1")
+            self.ids = []
+            self.chroma_client.delete_collection(name=self.name)
+            print("1")
+            if os.path.exists(chroma_data_path):
+                os.remove(chroma_data_path)
+            self.collection = self.chroma_client.create_collection(name=self.name, embedding_function=embedder)
+            logger.info('Successfully cleared all records and reset chromaDB.')
+            if characterName is not None:
+                chromaData_path = "extensions/superboogav2/chroma_data_" + f"{characterName}.json"
+            else:
+                chromaData_path = "extensions/superboogav2/chroma_data.json"
+            self.ids = []
+            self.id_to_info = {}
+            self.embeddings_cache = {}
+            save_chroma_data(self.ids, self.id_to_info, self.embeddings_cache, chromaData_path)
 def make_collector():
     return ChromaCollector()
