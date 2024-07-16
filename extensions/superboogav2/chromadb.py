@@ -384,6 +384,7 @@ class ChromaCollector():
 
     def get_sorted_by_dist(self, search_strings: list[str], n_results: int, max_token_count: int) -> list[str]:
         #Switching collection for different character than the TGW loaded with
+        global characterName
         if characterName != get_character_name(): #Checks for character change, and creates/loads collection for them
             characterName = get_character_name()
             logger.warn(f"different character was detected:({characterName})")
@@ -400,6 +401,7 @@ class ChromaCollector():
 
     def delete(self, ids_to_delete: list[str], where: dict):
         #Switching collection for different character than the TGW loaded with
+        global characterName
         if characterName != get_character_name(): #Checks for character change, and creates/loads collection for them
             characterName = get_character_name()
             logger.warn(f"different character was detected:({characterName})")
